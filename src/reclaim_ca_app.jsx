@@ -662,6 +662,22 @@ function LeadDrawer({lead, drawerTab, setDrawerTab, onClose, onSave, onMove}) {
                 {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </div>
+            <div style={{marginTop:8}}>
+              {form.skipTrace === "requested" ? (
+                <span style={{fontSize:12,fontWeight:600,color:"var(--navy-deep)",background:"var(--gold-soft)",padding:"5px 10px",borderRadius:6,display:"inline-block"}}>⏳ Skip trace requested — runs on next skip-trace job</span>
+              ) : form.skipTrace === "done" ? (
+                <span style={{fontSize:12,fontWeight:600,color:"#1E7A50",background:"#E7F2EB",padding:"5px 10px",borderRadius:6,display:"inline-block"}}>✓ Skip traced</span>
+              ) : form.skipTrace === "no_match" ? (
+                <span style={{display:"inline-flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontSize:12,color:"var(--slate)"}}>No skip-trace match.</span>
+                  <button onClick={() => { const u={...form,skipTrace:"requested",activity:[...(form.activity||[]),{date:today(),action:"Skip trace requested"}]}; setForm(u); onSave(u); }}
+                    style={{padding:"4px 10px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--ink)",cursor:"pointer"}}>Try again</button>
+                </span>
+              ) : (
+                <button onClick={() => { const u={...form,skipTrace:"requested",activity:[...(form.activity||[]),{date:today(),action:"Skip trace requested"}]}; setForm(u); onSave(u); }}
+                  style={{padding:"5px 12px",borderRadius:6,fontSize:12,fontWeight:600,border:"none",background:"var(--navy)",color:"var(--surface)",cursor:"pointer"}}>🔎 Request skip trace</button>
+              )}
+            </div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,color:"var(--slate)",padding:4,lineHeight:1}}>✕</button>
         </div>
