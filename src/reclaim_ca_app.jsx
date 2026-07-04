@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
-const STORAGE_KEY = "reclaim_ca_v1";
+const STORAGE_KEY = "reclaim_ca_v1"; // legacy; data now lives in Supabase
 
 const STAGES = [
   { id: "lead",             label: "Lead",             color: "var(--stage-lead-fg)",      bg: "var(--stage-lead-bg)" },
@@ -1063,14 +1064,109 @@ body { margin:0; background:var(--cream); color:var(--ink); font-family:'DM Sans
 .btn-ghost:hover { background:var(--panel); }
 `;
 
+function BrandMark() {
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:10,justifyContent:"center",marginBottom:22}}>
+      <div style={{width:38,height:38,borderRadius:10,background:"var(--navy-deep)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Serif Display',serif",fontSize:19,color:"var(--gold-soft)"}}>R</div>
+      <div style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:"var(--navy-deep)"}}>Reclaim <span style={{color:"var(--gold)"}}>CA</span></div>
+    </div>
+  );
+}
+
+function CenteredShell({ children }) {
+  return (
+    <div style={{minHeight:"100vh",background:"var(--cream)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <style>{GLOBAL_CSS}</style>
+      <div style={{width:400,maxWidth:"100%",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:16,padding:"32px 28px",boxShadow:"0 24px 50px -30px rgba(18,41,63,.4)"}}>
+        <BrandMark/>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SetupNotice() {
+  return (
+    <CenteredShell>
+      <div style={{textAlign:"center"}}>
+        <h2 style={{fontFamily:"'DM Serif Display',serif",fontWeight:400,fontSize:20,color:"var(--navy-deep)",margin:"0 0 10px"}}>Connect your database</h2>
+        <p style={{fontSize:14,color:"var(--slate)",lineHeight:1.6,margin:0}}>This dashboard needs its Supabase keys before it can load. Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> (see <b>PHASE1_SETUP.md</b>), then redeploy.</p>
+      </div>
+    </CenteredShell>
+  );
+}
+
+function AuthScreen() {
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!email || !pw) return;
+    setErr(""); setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
+    if (error) setErr(error.message);
+    setBusy(false);
+  };
+  const field = {width:"100%",padding:"11px 12px",border:"1px solid var(--border)",borderRadius:9,fontSize:14,outline:"none",background:"var(--cream)",fontFamily:"inherit",marginBottom:12};
+  return (
+    <CenteredShell>
+      <div style={{textAlign:"center",marginBottom:18,fontSize:13,color:"var(--slate)"}}>Sign in to your recovery dashboard</div>
+      <input style={field} type="email" placeholder="Email" value={email} autoComplete="username"
+        onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
+      <input style={field} type="password" placeholder="Password" value={pw} autoComplete="current-password"
+        onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
+      {err && <div style={{fontSize:13,color:"#A5402F",background:"#FBEBE8",border:"1px solid #F0CFC8",borderRadius:8,padding:"9px 11px",marginBottom:12}}>{err}</div>}
+      <button onClick={submit} disabled={busy||!email||!pw}
+        style={{width:"100%",padding:"12px",borderRadius:9,border:"none",background:"var(--gold)",color:"var(--navy-deep)",fontWeight:700,fontSize:14,cursor:(busy||!email||!pw)?"default":"pointer",opacity:(busy||!email||!pw)?.6:1,fontFamily:"inherit"}}>
+        {busy?"Signing in…":"Sign in"}
+      </button>
+      <div style={{fontSize:12,color:"var(--slate)",textAlign:"center",marginTop:16,lineHeight:1.5}}>
+        Accounts are created in your Supabase project (Authentication → Users). There's no public sign-up.
+      </div>
+    </CenteredShell>
+  );
+}
+
 export default function App() {
-  const [leads, setLeads] = useState(() => {
-    try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : SAMPLE_LEADS; }
-    catch { return SAMPLE_LEADS; }
-  });
+  // ── Auth ──────────────────────────────────────────────────────────────────
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(leads)); } catch (e) { /* storage full/blocked */ }
-  }, [leads]);
+    if (!isSupabaseConfigured) { setAuthReady(true); return; }
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthReady(true); });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+  const signOut = async () => { if (supabase) await supabase.auth.signOut(); };
+
+  // ── Data (Supabase-backed) ─────────────────────────────────────────────────
+  const [leads, setLeads] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const rowToLead = (r) => ({ ...r.data, id: r.id });
+  const loadLeads = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from("leads").select("*");
+    if (error) { setSyncMsg("Load failed: " + error.message); setLoading(false); return; }
+    setLeads((data || []).map(rowToLead));
+    setLoading(false);
+  };
+  useEffect(() => {
+    if (!session) { setLeads([]); setLoading(false); return; }
+    loadLeads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+  const persistLead = async (lead) => {
+    const { error } = await supabase.from("leads").upsert({ id: lead.id, data: lead });
+    if (error) setSyncMsg("Save failed: " + error.message);
+  };
+  const seedSamples = async () => {
+    setSyncMsg("");
+    const { error } = await supabase.from("leads").upsert(SAMPLE_LEADS.map(l => ({ id: l.id, data: l })));
+    if (error) { setSyncMsg("Seed failed: " + error.message); return; }
+    await loadLeads();
+    setSyncMsg("Sample data loaded.");
+  };
 
   const [tab, setTab] = useState("dashboard");
   const [selected, setSelected] = useState(null);
@@ -1085,6 +1181,7 @@ export default function App() {
   const saveLead = (updated) => {
     setLeads(ls => ls.map(l => l.id === updated.id ? updated : l));
     setSelected(s => (s && s.id === updated.id ? updated : s));
+    persistLead(updated);
   };
 
   // Handles both PipelineTab (plain lead + target stage) and the drawer
@@ -1096,12 +1193,14 @@ export default function App() {
           activity: [...(lead.activity||[]), {date:today(), action:"Stage → "+stageOf(stageId).label}] };
     setLeads(ls => ls.map(l => l.id === u.id ? u : l));
     setSelected(s => (s && s.id === u.id ? u : s));
+    persistLead(u);
   };
 
   const addLead = (lead) => {
     const capped = {...lead, feePercent:capFee(lead.feePercent),
                     feeAmount:feeAmountFor(lead.propertyValue, lead.feePercent)};
     setLeads(ls => [capped, ...ls]);
+    persistLead(capped);
     setShowNew(false);
   };
 
@@ -1117,14 +1216,15 @@ export default function App() {
       if (!Array.isArray(incoming) || incoming.length === 0) {
         setSyncMsg("No new intake submissions.");
       } else {
-        setLeads(ls => {
-          const have = new Set(ls.map(l => l.id));
-          const fresh = incoming
-            .filter(l => !have.has(l.id))
-            .map(l => ({...l, feePercent: capFee(l.feePercent ?? CA_FEE_CAP),
-                              feeAmount: feeAmountFor(l.propertyValue, l.feePercent ?? CA_FEE_CAP)}));
-          return [...fresh, ...ls];
-        });
+        const have = new Set(leads.map(l => l.id));
+        const fresh = incoming
+          .filter(l => !have.has(l.id))
+          .map(l => ({...l, feePercent: capFee(l.feePercent ?? CA_FEE_CAP),
+                            feeAmount: feeAmountFor(l.propertyValue, l.feePercent ?? CA_FEE_CAP)}));
+        if (fresh.length) {
+          await supabase.from("leads").upsert(fresh.map(l => ({ id: l.id, data: l })));
+          setLeads(ls => [...fresh, ...ls]);
+        }
         try {
           await fetch("/.netlify/functions/pending-leads", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -1161,23 +1261,25 @@ export default function App() {
     try {
       const rows = JSON.parse(await file.text());
       if (!Array.isArray(rows)) throw new Error("expected a JSON array of leads");
-      setLeads(ls => {
-        const byId = new Map(ls.map(l => [l.id, l]));
-        for (const r of rows) {
-          if (!r || !r.id) continue;
-          byId.set(r.id, {
-            outreachLog: [], activity: [], notes: "", aiNotes: "", paidDate: null,
-            ...r,
-            propertyState: "CA",
-            stage: normStage(r.stage),
-            feePercent: capFee(r.feePercent ?? CA_FEE_CAP),
-            feeAmount: feeAmountFor(r.propertyValue, r.feePercent ?? CA_FEE_CAP),
-            docs: normDocs(r.docs),
-          });
-        }
-        return Array.from(byId.values());
-      });
-      setSyncMsg(`Imported ${rows.length} lead${rows.length === 1 ? "" : "s"} from file.`);
+      const normalized = [];
+      for (const r of rows) {
+        if (!r || !r.id) continue;
+        normalized.push({
+          outreachLog: [], activity: [], notes: "", aiNotes: "", paidDate: null,
+          ...r,
+          propertyState: "CA",
+          stage: normStage(r.stage),
+          feePercent: capFee(r.feePercent ?? CA_FEE_CAP),
+          feeAmount: feeAmountFor(r.propertyValue, r.feePercent ?? CA_FEE_CAP),
+          docs: normDocs(r.docs),
+        });
+      }
+      if (normalized.length) {
+        const { error } = await supabase.from("leads").upsert(normalized.map(l => ({ id: l.id, data: l })));
+        if (error) throw new Error(error.message);
+        await loadLeads();
+      }
+      setSyncMsg(`Imported ${normalized.length} lead${normalized.length === 1 ? "" : "s"} from file.`);
     } catch (e) {
       setSyncMsg("Import failed: " + e.message);
     }
@@ -1193,6 +1295,10 @@ export default function App() {
       default:         return <Dashboard leads={leads} onSelect={openLead} />;
     }
   };
+
+  if (!isSupabaseConfigured) return <SetupNotice/>;
+  if (!authReady) return <CenteredShell><div style={{textAlign:"center",fontSize:13,color:"var(--slate)"}}>Loading…</div></CenteredShell>;
+  if (!session) return <AuthScreen/>;
 
   return (
     <div style={{minHeight:"100vh",background:"var(--cream)"}}>
@@ -1220,6 +1326,12 @@ export default function App() {
             </button>
             <button className="btn-primary" onClick={() => setShowNew(true)}
               style={{background:"var(--gold)",color:"var(--navy-deep)"}}>+ New Lead</button>
+            {!loading && leads.length === 0 && (
+              <button className="btn-ghost" onClick={seedSamples}
+                style={{borderColor:"rgba(255,255,255,.25)",color:"var(--surface)"}}>Load sample data</button>
+            )}
+            <button className="btn-ghost" onClick={signOut}
+              style={{borderColor:"rgba(255,255,255,.25)",color:"var(--surface)"}}>Sign out</button>
           </div>
         </div>
         <div style={{maxWidth:1180,margin:"0 auto",display:"flex",gap:4,overflowX:"auto"}}>
@@ -1235,7 +1347,7 @@ export default function App() {
       </header>
 
       <main style={{maxWidth:1180,margin:"0 auto",padding:"clamp(16px,4vw,28px)"}}>
-        {renderTab()}
+        {loading ? <div style={{textAlign:"center",color:"var(--slate)",padding:"60px 0",fontSize:14}}>Loading your leads…</div> : renderTab()}
       </main>
 
       {selected && (
