@@ -1,0 +1,8 @@
+# Reclaim CA — Netlify config
+[build]
+  command = "npm run build"
+  publish = "dist"          # Vite default; change if your output dir differs
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
